@@ -7,7 +7,6 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using Microsoft.AspNet.Http;
-using Microsoft.AspNet.Http.Core;
 using Microsoft.AspNet.Mvc.Core;
 using Microsoft.AspNet.Mvc.ModelBinding.Validation;
 using Microsoft.AspNet.Routing;

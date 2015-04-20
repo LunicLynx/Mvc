@@ -27,7 +27,7 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
         }
 
         [Fact]
-        public async Task BodyBoundOnProperty_RequiredOnProperty_AddsModelStateError()
+        public async Task FromBodyAndRequiredOnProperty_EmptyBody_AddsModelStateError()
         {
             // Arrange
             var argumentBinder = ModelBindingTestHelper.GetArgumentBinder();
@@ -43,14 +43,22 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
 
             var operationContext = ModelBindingTestHelper.GetOperationBindingContext();
             var httpContext = operationContext.HttpContext;
+
             ConfigureHttpRequest(httpContext.Request, string.Empty);
             var modelState = new ModelStateDictionary();
 
             // Act
-            var model = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
+            var modelBindingResult = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
 
             // Assert
-            Assert.Equal("The Address field is required.", modelState[""].Errors.Single().ErrorMessage);
+            Assert.NotNull(modelBindingResult);
+            Assert.True(modelBindingResult.IsModelSet);
+            var boundPerson = Assert.IsType<Person>(modelBindingResult.Model);
+            var key = Assert.Single(modelState.Keys);
+            Assert.Equal("", key);
+            Assert.NotNull(boundPerson);
+            Assert.False(modelState.IsValid);
+            Assert.Equal("The Address field is required.", modelState[key].Errors.Single().ErrorMessage);
         }
 
         private class Person4
@@ -61,7 +69,7 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
         }
 
         [Fact]
-        public async Task BodyBoundOnProperty_RequiredOnValueTypeProperty_AddsModelStateError()
+        public async Task FromBodyAndRequiredOnValueTypeProperty_EmptyBody_AddsModelStateError()
         {
             // Arrange
             var argumentBinder = ModelBindingTestHelper.GetArgumentBinder();
@@ -78,12 +86,22 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
             var operationContext = ModelBindingTestHelper.GetOperationBindingContext();
             var httpContext = operationContext.HttpContext;
             ConfigureHttpRequest(httpContext.Request, string.Empty);
-            var modelState = new ModelStateDictionary();
+            var actionContext = httpContext.RequestServices.GetRequiredService<IScopedInstance<ActionContext>>().Value;
+            var modelState = actionContext.ModelState;
 
             // Act
-            var model = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
+            var modelBindingResult = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
 
             // Assert
+            Assert.NotNull(modelBindingResult);
+            Assert.True(modelBindingResult.IsModelSet);
+            var boundPerson = Assert.IsType<Person4>(modelBindingResult.Model);
+            Assert.NotNull(boundPerson);
+            Assert.False(modelState.IsValid);
+
+            // The error with an empty key is a bug(#2416)  in our implementation which does not append the prefix and
+            // use that along with the path. The expected key here would be CustomParameter.Address.
+            var key = Assert.Single(modelState.Keys, k => k == "");
             Assert.StartsWith("No JSON content found and type 'System.Int32' is not nullable.",
                 modelState[""].Errors.Single().Exception.Message);
         }
@@ -105,7 +123,7 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
         [Theory]
         [InlineData("{ \"Zip\" : 123 }")]
         [InlineData("{}")]
-        public async Task BodyBoundOnTopLevelProperty_RequiredOnSubProperty_AddsModelStateError(string inputText)
+        public async Task FromBodyOnTopLevelProperty_RequiredOnSubProperty_AddsModelStateError(string inputText)
         {
             // Arrange
             var argumentBinder = ModelBindingTestHelper.GetArgumentBinder();
@@ -124,10 +142,20 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
             var modelState = new ModelStateDictionary();
 
             // Act
-            var model = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
+            var modelBindingResult = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
 
             // Assert
-            Assert.Equal("The Street field is required.", modelState["Street"].Errors.Single().ErrorMessage);
+            Assert.NotNull(modelBindingResult);
+            Assert.True(modelBindingResult.IsModelSet);
+            var boundPerson = Assert.IsType<Person2>(modelBindingResult.Model);
+            Assert.NotNull(boundPerson);
+            Assert.False(modelState.IsValid);
+            var zip = Assert.Single(modelState.Keys, k => k == "CustomParameter.Address.Zip");
+            Assert.Equal(ModelValidationState.Valid, modelState[zip].ValidationState);
+
+            var street = Assert.Single(modelState.Keys, k => k == "CustomParameter.Address.Street");
+            Assert.Equal(ModelValidationState.Invalid, modelState[street].ValidationState);
+            Assert.Equal("The Street field is required.", modelState[street].Errors.Single().ErrorMessage);
         }
 
         private class Person3
@@ -147,7 +175,7 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
         [Theory]
         [InlineData("{ \"Street\" : \"someStreet\" }")]
         [InlineData("{}")]
-        public async Task BodyBoundOnProperty_RequiredOnValueTypeSubProperty_AddsModelStateError(string inputText)
+        public async Task FromBodyOnProperty_RequiredOnValueTypeSubProperty_AddsModelStateError(string inputText)
         {
             // Arrange
             var argumentBinder = ModelBindingTestHelper.GetArgumentBinder();
@@ -167,11 +195,21 @@ namespace Microsoft.AspNet.Mvc.ModelBinding.Test
             var modelState = actionContext.ModelState;
 
             // Act
-            var model = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
+            var modelBindingResult = await argumentBinder.BindModelAsync(parameter, modelState, operationContext);
 
             // Assert
-            // TODO : This is a bug in how the input formatters add the error. Ideally the key should have been
-            // Zip.
+            Assert.NotNull(modelBindingResult);
+            Assert.True(modelBindingResult.IsModelSet);
+            var boundPerson = Assert.IsType<Person3>(modelBindingResult.Model);
+            Assert.NotNull(boundPerson);
+            Assert.False(modelState.IsValid);
+            var street = Assert.Single(modelState.Keys, k => k == "CustomParameter.Address.Street");
+            Assert.Equal(ModelValidationState.Valid, modelState[street].ValidationState);
+
+            // The error with an empty key is a bug(#2416) in our implementation which does not append the prefix and
+            // use that along with the path. The expected key here would be Address.
+            var zip = Assert.Single(modelState.Keys, k => k == "CustomParameter.Address.Zip");
+            Assert.Equal(ModelValidationState.Valid, modelState[zip].ValidationState);
             Assert.StartsWith(
                 "Required property 'Zip' not found in JSON. Path ''",
                 modelState[""].Errors.Single().Exception.Message);
